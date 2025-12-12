@@ -1,8 +1,11 @@
+import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import datetime, time as dtime
 
-# -------------------------------------
-# CO₂ conversion factors per fuel type
-# -------------------------------------
+# ---------------------------------------------------------
+# CII Utils
+# ---------------------------------------------------------
 CII_FACTORS = {
     "HFO": 3.114,
     "MGO": 3.206,
@@ -10,58 +13,43 @@ CII_FACTORS = {
     "LNG": 2.75,
 }
 
-# ----------------------------------------------------
-# IMO Reference Line Parameters (G2 Guidelines)
-# ----------------------------------------------------
 REFERENCE_PARAMS = {
     "Bulk Carrier": (4745, 0.622),
     "Tanker": (5247, 0.610),
     "Container": (1984, 0.489),
     "General Cargo <20k": (588, 0.3885),
     "General Cargo ≥20k": (31948, 0.792),
-    # Add more classes when needed
 }
 
-# ----------------------------------------------------
-# IMO CII Reduction Factors (as % from 2019 reference)
-# Expandable for future years
-# ----------------------------------------------------
 REDUCTION_FACTORS = {
-    2023: 0.05,   # -5%
-    2024: 0.07,   # -7%
-    2025: 0.09,   # -9%
-    2026: 0.11,   # -11% | Placeholder (update when IMO issues)
-    2027: 0.13,   # Placeholder
-    2028: 0.15,   # Placeholder
+    2023: 0.05,
+    2024: 0.07,
+    2025: 0.09,
+    2026: 0.11,
+    2027: 0.13,
+    2028: 0.15,
 }
 
+# -----------------------------
+# CII Calculation
+# -----------------------------
 def calculate_cii(df, ship_type, date_from, date_to, dwt=0):
-    # Convert dates
-    df["DateUTC"] = pd.to_datetime(df["DateUTC"]).dt.date
-
-    # Filter by date range
+    df["DateUTC"] = pd.to_datetime(df["DateUTC"], errors="coerce").dt.date
     filtered = df[(df["DateUTC"] >= date_from) & (df["DateUTC"] <= date_to)]
 
-    # Total distance
-    distance = filtered["Distance"].sum() if "Distance" in filtered.columns else 0
+    distance = filtered.get("Distance", pd.Series([0])).sum()
 
-    # Total fuel calculations
     fuel_cols = [
         "MEConsumptionHFO", "MEConsumptionMGO",
         "AEConsumptionHFO", "AEConsumptionMGO",
         "BoilerConsumptionHFO", "BoilerConsumptionMGO",
         "IGSConsumptionHFO", "IGSConsumptionMGO"
     ]
-
     for col in fuel_cols:
-        if col in filtered.columns:
-            filtered[col] = pd.to_numeric(filtered[col], errors='coerce').fillna(0)
-        else:
-            filtered[col] = 0
+        filtered[col] = pd.to_numeric(filtered.get(col, 0), errors='coerce').fillna(0)
 
     total_fuel = round(filtered[fuel_cols].sum().sum(), 3)
 
-    # Total CO2 Emission
     co2 = (
         filtered["MEConsumptionHFO"].sum() * CII_FACTORS["HFO"] +
         filtered["MEConsumptionMGO"].sum() * CII_FACTORS["MGO"] +
@@ -73,40 +61,22 @@ def calculate_cii(df, ship_type, date_from, date_to, dwt=0):
         filtered["IGSConsumptionMGO"].sum() * CII_FACTORS["MGO"]
     )
 
-    # Detect or use provided DWT
     if dwt == 0:
-        if "DraftDisplacementActual" in filtered.columns:
-            dwt = filtered["DraftDisplacementActual"].iloc[0]
-        else:
-            dwt = 50000   # fallback
+        dwt = filtered["DraftDisplacementActual"].iloc[0] if "DraftDisplacementActual" in filtered.columns else 50000
 
-    # Avoid division by zero
     attained_aer = (co2 / (dwt * distance)) * 1_000_000 if distance > 0 else 0
 
-    # ------------------------------------------
-    # REQUIRED AER CALCULATION (dynamic by year)
-    # ------------------------------------------
+    year = date_to.year
+    reduction_factor = REDUCTION_FACTORS.get(year, 0.09)
 
-    # Determine year from date_to
-    calculation_year = date_to.year
-    reduction_factor = REDUCTION_FACTORS.get(calculation_year, 0.09)  # default 2025 value
-
-    # Determine correct reference line parameters
-    # For cable layer → use General Cargo <20k as proxy (recommended)
     if ship_type == "Cable Layer":
         a, c = REFERENCE_PARAMS["General Cargo <20k"]
     else:
         a, c = REFERENCE_PARAMS[ship_type]
 
-    # Step 1: Reference line CII_REF
     cii_ref = a * (dwt ** (-c))
-
-    # Step 2: Apply reduction
     required_aer_value = (1 - reduction_factor) * cii_ref
 
-    # ------------------------------------------
-    # CII RATING (A to E)
-    # ------------------------------------------
     if attained_aer <= 0.75 * required_aer_value:
         rating = "A"
     elif attained_aer <= 0.90 * required_aer_value:
@@ -118,18 +88,132 @@ def calculate_cii(df, ship_type, date_from, date_to, dwt=0):
     else:
         rating = "E"
 
-    # Final result
-        result = {
-        "Year Evaluated": calculation_year,
-        "Reduction Factor Applied": reduction_factor,
-        "Total Distance (nm)": float(round(distance, 3)),
-        "Total Fuel (MT)": float(round(total_fuel, 3)),
-        "CO₂ Emission (MT)": float(round(co2, 3)),
-        "Attained AER (g CO₂ / DWT-nm)": float(round(attained_aer, 3)),
-        "Required AER": float(round(required_aer_value, 3)),
-        "CII Rating": rating,
-        "DWT Used": float(round(dwt, 3))
-                        }
+    return filtered, {
+        "Distance (NM)": distance,
+        "Total Fuel (MT)": total_fuel,
+        "Total CO2 (MT)": round(co2, 3),
+        "DWT Used": dwt,
+        "Attained AER": round(attained_aer, 3),
+        "Required AER": round(required_aer_value, 3),
+        "CII Rating": rating
+    }
 
+# -----------------------------
+# Operational Classification
+# -----------------------------
+def classify_operation_by_events_in_range(df, date_from, date_to):
+    df = df.copy()
 
-    return filtered, result
+    # Required columns
+    fuel_cols = [
+        "MEConsumptionHFO","AEConsumptionHFO","BoilerConsumptionHFO",
+        "MEConsumptionMGO","AEConsumptionMGO","BoilerConsumptionMGO"
+    ]
+    for c in fuel_cols:
+        df[c] = pd.to_numeric(df.get(c, 0), errors="coerce").fillna(0)
+
+    df["DateTimeInUTC"] = pd.to_datetime(df["DateTimeInUTC"], errors="coerce")
+    df = df.sort_values("DateTimeInUTC").reset_index(drop=True)
+
+    start_dt = datetime.combine(pd.to_datetime(date_from).date(), dtime.min)
+    end_dt = datetime.combine(pd.to_datetime(date_to).date(), dtime.max)
+    mask = (df["DateTimeInUTC"] >= start_dt) & (df["DateTimeInUTC"] <= end_dt)
+    filtered = df.loc[mask].reset_index(drop=True)
+
+    if filtered.empty:
+        return {k:0 for k in ["Sea Hours","Port Hours","Drifting Hours","Sea HFO","Port HFO","Drifting HFO","Sea MGO","Port MGO","Drifting MGO"]}
+
+    SEA = {"Arrival", "Departure", "Noon (Sea)"}
+    PORT = {"Shifting to Berth", "Idle In Port", "IDLE IN PORT", "Discharging", "Loading", "LOADING"}
+    DRIFT = {"Drifting", "Awaiting Orders", "Stopping Engine"}
+
+    sea_h = port_h = drift_h = 0
+    sea_hfo = port_hfo = drift_hfo = 0
+    sea_mgo = port_mgo = drift_mgo = 0
+
+    for i, row in filtered.iterrows():
+        if i == 0:
+            interval = 0
+        else:
+            prev_time = filtered.loc[i-1, "DateTimeInUTC"]
+            interval = row["TimeSincePreviousReport"]
+
+        row_hfo = row["MEConsumptionHFO"] + row["AEConsumptionHFO"] + row["BoilerConsumptionHFO"]
+        row_mgo = row["MEConsumptionMGO"] + row["AEConsumptionMGO"] + row["BoilerConsumptionMGO"]
+
+        event = str(row["EventType"]).strip()
+        if event in SEA:
+            sea_h += interval
+            sea_hfo += row_hfo
+            sea_mgo += row_mgo
+        elif event in PORT:
+            port_h += interval
+            port_hfo += row_hfo
+            port_mgo += row_mgo
+        elif event in DRIFT:
+            drift_h += interval
+            drift_hfo += row_hfo
+            drift_mgo += row_mgo
+
+    return {
+        "Sea Hours": round(sea_h,2),
+        "Port Hours": round(port_h,2),
+        "Drifting Hours": round(drift_h,2),
+        "Sea HFO": round(sea_hfo,3),
+        "Port HFO": round(port_hfo,3),
+        "Drifting HFO": round(drift_hfo,3),
+        "Sea MGO": round(sea_mgo,3),
+        "Port MGO": round(port_mgo,3),
+        "Drifting MGO": round(drift_mgo,3)
+    }
+
+# -----------------------------
+# Streamlit App
+# -----------------------------
+st.set_page_config(page_title="CII & Operations Dashboard", layout="wide")
+st.title("📘 CII Calculator & Operational Analysis")
+
+uploaded = st.file_uploader("Upload Noon Report Excel", type=["xlsx"])
+ship_type = st.selectbox(
+    "Select Ship Type",
+    ["Bulk Carrier", "Tanker", "Container", "RoRo", "General Cargo", "Cable Layer"]
+)
+dwt = st.number_input("Deadweight (DWT in tonnes)", min_value=1000.0, value=50000.0, step=100.0)
+
+col1, col2 = st.columns(2)
+with col1:
+    date_from = st.date_input("From Date")
+with col2:
+    date_to = st.date_input("To Date")
+
+if uploaded and st.button("Calculate CII & Operations"):
+    df = pd.read_excel(uploaded, sheet_name="LogAbstract")
+    filtered, cii_result = calculate_cii(df, ship_type, date_from, date_to, dwt=dwt)
+    ops_result = classify_operation_by_events_in_range(df, date_from, date_to)
+
+    st.subheader("✅ CII Results")
+    st.json(cii_result)
+
+    st.subheader("⚓ Operational Breakdown (Hours & Consumption)")
+    st.json(ops_result)
+
+    # -----------------------------
+    # Hours Pie Chart
+    # -----------------------------
+    labels = ["Sea", "Port", "Drifting"]
+    sizes = [ops_result["Sea Hours"], ops_result["Port Hours"], ops_result["Drifting Hours"]]
+
+    fig1, ax1 = plt.subplots()
+    ax1.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90)
+    ax1.set_title("Hours Distribution")
+    st.pyplot(fig1)
+
+    # -----------------------------
+    # Fuel Bar Chart
+    # -----------------------------
+    fuel_data = pd.DataFrame({
+        "HFO": [ops_result["Sea HFO"], ops_result["Port HFO"], ops_result["Drifting HFO"]],
+        "MGO": [ops_result["Sea MGO"], ops_result["Port MGO"], ops_result["Drifting MGO"]]
+    }, index=["Sea","Port","Drifting"])
+    st.subheader("⚡ Fuel Consumption (MT)")
+    st.bar_chart(fuel_data)
