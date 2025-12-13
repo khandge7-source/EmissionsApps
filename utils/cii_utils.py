@@ -89,6 +89,7 @@ def calculate_cii(df, ship_type, date_from, date_to, dwt=0):
         rating = "E"
 
     return filtered, {
+        "calculation_period": f"{date_from} to {date_to}",
         "Distance (NM)": distance,
         "Total Fuel (MT)": total_fuel,
         "Total CO2 (MT)": round(co2, 3),
