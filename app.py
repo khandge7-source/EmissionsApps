@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown("<h1 class='text-center mt-4'>⚓ Geoserve Emissions & CII Suite</h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='text-center mt-4'>⚓Emissions & CII Suite</h1>", unsafe_allow_html=True)
 
 st.markdown("""
 

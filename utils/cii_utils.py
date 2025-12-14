@@ -124,7 +124,7 @@ def classify_operation_by_events_in_range(df, date_from, date_to):
     if filtered.empty:
         return {k:0 for k in ["Sea Hours","Port Hours","Drifting Hours","Sea HFO","Port HFO","Drifting HFO","Sea MGO","Port MGO","Drifting MGO"]}
 
-    SEA = {"Arrival", "Departure", "Noon (Sea)"}
+    SEA = {"Arrival", "Departure", "BOSP", "Noon (Sea)"}
     PORT = {"Shifting to Berth", "Idle In Port", "IDLE IN PORT", "Discharging", "Loading", "LOADING"}
     DRIFT = {"Drifting", "Awaiting Orders", "Stopping Engine"}
 
@@ -134,7 +134,7 @@ def classify_operation_by_events_in_range(df, date_from, date_to):
 
     for i, row in filtered.iterrows():
         if i == 0:
-            interval = 0
+            interval = row["TimeSincePreviousReport"]
         else:
             prev_time = filtered.loc[i-1, "DateTimeInUTC"]
             interval = row["TimeSincePreviousReport"]
@@ -157,16 +157,18 @@ def classify_operation_by_events_in_range(df, date_from, date_to):
             drift_mgo += row_mgo
 
     return {
-        "Sea Hours": round(sea_h,2),
-        "Port Hours": round(port_h,2),
-        "Drifting Hours": round(drift_h,2),
-        "Sea HFO": round(sea_hfo,3),
-        "Port HFO": round(port_hfo,3),
-        "Drifting HFO": round(drift_hfo,3),
-        "Sea MGO": round(sea_mgo,3),
-        "Port MGO": round(port_mgo,3),
-        "Drifting MGO": round(drift_mgo,3)
-    }
+         "Sea Hours": round(sea_h, 2),
+         "Sea HFO": round(sea_hfo, 3),
+         "Sea MGO": round(sea_mgo, 3),
+
+         "Port Hours": round(port_h, 2),
+         "Port HFO": round(port_hfo, 3),
+         "Port MGO": round(port_mgo, 3),
+
+         "Drifting Hours": round(drift_h, 2),
+         "Drifting HFO": round(drift_hfo, 3),
+         "Drifting MGO": round(drift_mgo, 3),
+        }
 
 # -----------------------------
 # Streamlit App
