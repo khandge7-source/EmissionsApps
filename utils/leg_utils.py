@@ -1,4 +1,6 @@
 import pandas as pd
+from utils.unlocode_utils import resolve_port_name
+
 
 # --------------------------------------------------
 # STEP 1: ASSIGN LEG IDs
@@ -38,10 +40,13 @@ def summarize_legs(df):
 
     for leg_id, g in df.groupby("Leg_ID", dropna=True):
 
+        from_code = g["VoyageFrom"].iloc[0] if "VoyageFrom" in g.columns else ""
+        to_code = g["VoyageTo"].iloc[-1] if "VoyageTo" in g.columns else ""
+
         summaries.append({
             "Leg_ID": leg_id,
-            "From": g["VoyageFrom"].iloc[0] if "VoyageFrom" in g.columns else "",
-            "To": g["VoyageTo"].iloc[-1] if "VoyageTo" in g.columns else "",
+            "From": f"{resolve_port_name(from_code)} ({from_code})",
+            "To": f"{resolve_port_name(to_code)} ({to_code})",
             "Start": g["DateTimeInUTC"].min(),
             "End": g["DateTimeInUTC"].max(),
             "Distance (NM)": g["Distance"].fillna(0).sum(),
@@ -50,3 +55,4 @@ def summarize_legs(df):
         })
 
     return pd.DataFrame(summaries)
+

@@ -7,6 +7,8 @@ from utils.operations import classify_operation_by_events_in_range
 from utils.data_loader import load_excel
 from utils.leg_utils import assign_legs, summarize_legs
 
+from utils.unlocode_utils import map_ports
+
 # ==================================================
 # PAGE CONFIG
 # ==================================================
@@ -56,7 +58,7 @@ def autopct_with_values(values, unit=""):
 if uploaded:
 
     df = load_excel(uploaded, "LogAbstract")
-
+    df = map_ports(df)
     if df.empty:
         st.error("❌ No data found in LogAbstract sheet.")
         st.stop()
