@@ -34,25 +34,27 @@ def assign_legs(df):
 # --------------------------------------------------
 # STEP 2: LEG SUMMARY
 # --------------------------------------------------
-def summarize_legs(df):
+def summarize_voyages(df):
 
     summaries = []
 
-    for leg_id, g in df.groupby("Leg_ID", dropna=True):
+    for voyage_no, vdf in df.groupby("VoyageNumber", dropna=True):
 
-        from_code = g["VoyageFrom"].iloc[0] if "VoyageFrom" in g.columns else ""
-        to_code = g["VoyageTo"].iloc[-1] if "VoyageTo" in g.columns else ""
+        vdf = vdf.sort_values("DateTimeInUTC")
+
+        from_code = vdf["VoyageFrom"].iloc[0] if "VoyageFrom" in vdf.columns else ""
+        to_code = vdf["VoyageTo"].iloc[-1] if "VoyageTo" in vdf.columns else ""
 
         summaries.append({
-            "Leg_ID": leg_id,
+            "VoyageNumber": voyage_no,
+            "Total_Legs": vdf["Leg_ID"].nunique(),
             "From": f"{resolve_port_name(from_code)} ({from_code})",
             "To": f"{resolve_port_name(to_code)} ({to_code})",
-            "Start": g["DateTimeInUTC"].min(),
-            "End": g["DateTimeInUTC"].max(),
-            "Distance (NM)": g["Distance"].fillna(0).sum(),
-            "Fuel (MT)": g.filter(like="Consumption").fillna(0).sum().sum(),
-            "Records": len(g)
+            "Start": vdf["DateTimeInUTC"].min(),
+            "End": vdf["DateTimeInUTC"].max(),
+            "Total_Distance_NM": vdf["Distance"].fillna(0).sum(),
+            "Total_Fuel_MT": vdf.filter(like="Consumption").fillna(0).sum().sum(),
+            "Total_Records": len(vdf)
         })
 
     return pd.DataFrame(summaries)
-
